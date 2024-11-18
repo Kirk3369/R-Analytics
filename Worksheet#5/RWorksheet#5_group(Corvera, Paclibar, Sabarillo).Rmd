@@ -585,11 +585,11 @@ print(most_shows_year)
 2. Extracting Amazon Product Reviews
 ```{r}
 #4. URLs
-urls <- c('https://www.amazon.com/s?k=backpacks&crid=35ZQ1H72MC3G9&sprefix=backpacks%2Caps%2C590&ref=nb_sb_ss_ts-doa-p_3_9', 
-          'https://www.amazon.com/s?k=laptops&crid=L7MQBW7MD4SX&sprefix=laptopb%2Caps%2C1304&ref=nb_sb_noss_2',
-          'https://www.amazon.com/s?k=phone+case&dc&crid=1VPDCJ87S93TL&sprefix=phone+cas%2Caps%2C451&ref=a9_asc_1',
-          'https://www.amazon.com/s?k=mountain+bike&crid=1ZQR71S8XHZN6&sprefix=mountain+bik%2Caps%2C499&ref=nb_sb_noss_2',
-          'https://www.amazon.com/s?k=tshirt&crid=2RQIP7MP6IYAW&sprefix=tshirt%2Caps%2C443&ref=nb_sb_noss_2')
+urls <- c('https://www.amazon.com/s?k=PC&crid=3O0HDEISP3NAZ&sprefix=pc%2Caps%2C610&ref=nb_sb_noss_1', 
+          'https://www.amazon.com/s?k=graphics+card&crid=4BJILUAEFT5I&sprefix=graphics%2Caps%2C372&ref=nb_sb_ss_ts-doa-p_1_8',
+          'https://www.amazon.com/s?k=keyboard&crid=3647UWDU9H0TF&sprefix=keyboa%2Caps%2C331&ref=nb_sb_noss_2',
+          'https://www.amazon.com/s?k=mouse&crid=QMZNC639VEYB&sprefix=mouse%2Caps%2C336&ref=nb_sb_ss_ts-doa-p_2_5',
+          'https://www.amazon.com/s?k=motherboard&crid=1ZHTORVTCHK1A&sprefix=motherb%2Caps%2C346&ref=nb_sb_noss_2')
 ```
 
 
@@ -634,7 +634,7 @@ print(df[[5]])
 ```{r}
 #6. 
 
-#The code extracts data from Amazon product listing pages based on different search queries, such as "backpacks," "laptops," "phone cases," "mountain bikes," and "t-shirts." For each URL, the following information is extracted: Product Name along with its description(if available), Rating, and Price.
+#The code extracts data from Amazon product listing pages based on different search queries, such as "PC's", "Graphics Cards", "Keyboards", "Mouse", and "Motherboards". For each URL, the following information is extracted: Product Name along with its description(if available), Rating, and Price.
 ```
 
 
@@ -648,7 +648,7 @@ print(df[[5]])
 ```{r}
 #8
 combined_df <- do.call(rbind, df)
-combined_df$Category <- rep(c("Backpacks", "Laptops", "Phone Cases", "Mountain Bikes", "T-Shirts"), each = 30)
+combined_df$Category <- rep(c("PC's", "Graphics Cards", "Keyboards", "Mouse", "Motherboards"), each = 30)
 
 avg_rating <- combined_df %>%
   group_by(Category) %>%
@@ -697,7 +697,7 @@ ranked_data <- lapply(df, function(df_category) {
     select(Rank, everything()) 
 })
 
-categories <- c("Backpacks", "Laptops", "Phone Cases", "Mountain Bikes", "T-Shirts")
+categories <- c("PC's", "Graphics Cards", "Keyboards", "Mouse", "Motherboards")
 for (i in seq_along(ranked_data)) {
   ranked_data[[i]]$Category <- categories[i]
 }
