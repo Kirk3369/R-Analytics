@@ -5,708 +5,1064 @@ date: "2024-11-11"
 output:
   pdf_document: default
   html_document: default
+  latex_engine: xelatex
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-1. Extracting TV Shows
+```{r}
+library(httr)
+
+library(polite)
+
+library(rvest)
+
+library(dplyr)
+
+library(kableExtra)
+
+library(ggplot2)
+library(stringr)
+```
+
+1.
 ```{r}
 library(polite)
-library(httr)
+polite::use_manners(save_as = 'polite_scrape.R')
+
+url <- 'https://www.imdb.com/chart/toptv/?ref_=nv_tvv_250'
+
+
+session <- bow(url,
+               user_agent = "Educational")
+session
+```
+
+
+
+```{r}
+# Load necessary libraries
 library(rvest)
 library(dplyr)
 library(stringr)
-library(magrittr)
-library(ggplot2)
+library(rmarkdown)
 
-url <- "https://www.imdb.com/chart/toptv/?sort=rank%2Casc"
-#1
-#get the ranks and titles
-title_list <- read_html(url) %>%
-  html_nodes('.ipc-title__text') %>%
-  html_text()
-```
+# Define the URL for IMDb Top TV Shows
+url <- "https://www.imdb.com/chart/toptv/?ref_=nv_tvv_250c"
 
+# Read the webpage content
+webpage <- read_html(url)
 
-```{r}
-#Clean extracted text
-title_list_sub <- as.data.frame(title_list[3:27], stringsAsFactors = FALSE)
-colnames(title_list_sub) <- "ranks"
-split_df <- strsplit(as.character(title_list_sub$ranks), "\\.", fixed = FALSE)
-split_df <- data.frame(do.call(rbind, split_df), stringsAsFactors = FALSE)
-
-colnames(split_df) <- c("rank", "title")
-split_df <- split_df %>% dplyr::select(rank, title)
-
-split_df$title <- trimws(split_df$title)
-
-rank_title <- split_df
-```
-
-```{r}
-#get tv rating, the number of people who voted, the number of episodes, and the year it was released.
-rating_ls <- read_html(url) %>%
-  html_nodes('.ipc-rating-star--rating') %>%
+# Extract Show Titles
+show_titles <- webpage %>%
+  html_nodes('h3.ipc-title__text') %>%
   html_text()
 
-voter_ls <- read_html(url) %>%
-  html_nodes('.ipc-rating-star--voteCount') %>%
-  html_text()
-clean_votes <- gsub('[()]', '', voter_ls)
+show_titles <- show_titles[show_titles != "IMDb Charts"]
 
-```
-
-```{r}
-#get the number of episodes
-eps_ls <- read_html(url) %>%
-  html_nodes('span.sc-5bc66c50-6.OOdsw.cli-title-metadata-item:nth-of-type(2)') %>%
-  html_text()
-clean_eps <- gsub('[eps]', '', eps_ls)
-num_eps <- as.numeric(clean_eps)
-```
-
-
-
-```{r}
-#get year released 
-years <- read_html(url) %>%
-  html_nodes('span.sc-5bc66c50-6.OOdsw.cli-title-metadata-item:nth-of-type(1)') %>%
+# Extract Ratings
+show_ratings <- webpage %>% 
+  html_nodes("span.ipc-rating-star--rating") %>%
   html_text()
 
-top_tv_shows <- data.frame(
-  Rank = rank_title[1],
-  Title = rank_title[2],
-  Rating = rating_ls,
-  Voters = clean_votes,
-  Episodes = num_eps,
-  Year = years,
-  stringsAsFactors = FALSE
-)
+# Extract the number of people who voted
+num_votes <- webpage %>%
+  html_nodes("span.ipc-rating-star--voteCount") %>%
+  html_text()
 
-```
+# Extract Episode Numbers
+episode_info <- webpage %>%
+  html_nodes('span.sc-300a8231-7.eaXxft.cli-title-metadata-item:nth-of-type(2)') %>%
+  html_text()
 
-```{r}
-#Number of user reviews
-home_link <- 'https://www.imdb.com/chart/toptv/'
-main_page <- read_html(home_link)
+# Clean the episode data (extract only the number of episodes)
+episode_counts <- str_extract(episode_info, "\\d+ eps")
+episode_counts <- str_remove(episode_counts, " eps")
 
-links <- main_page %>%
-  html_nodes("a.ipc-title-link-wrapper") %>%
-  html_attr("href")
-```
+# Extract Year of release
+year_info <- webpage %>%
+  html_nodes('span.sc-300a8231-7.eaXxft.cli-title-metadata-item') %>%
+  html_text()
 
-```{r}
-#get link of each show's page
-show_data <- lapply(links, function(link) {
+# Extract the release year using a regex
+release_years <- str_extract(year_info, "\\d{4}")
+release_years <- release_years[!is.na(release_years)]  # Remove NA values
+release_years <- as.numeric(release_years)
+
+# Function to scrape critic reviews for each show
+get_critic_reviews <- function(link) {
   complete_link <- paste0("https://imdb.com", link)
+  show_page <- read_html(complete_link)
   
-  #get the link for user review page
-  usrv_link <- read_html(complete_link)
-  usrv_link_page <- usrv_link %>%
-    html_nodes('a.isReview') %>%
-    html_attr("href")
-  
-  #get critic reviews
-  critic <- usrv_link %>%
-    html_nodes("span.score") %>%
+  # Extract critic reviews
+  critic <- show_page %>%
+    html_nodes("span.score") %>%  # Adjust this if necessary based on page structure
     html_text()
-  critic_df <- data.frame(Critic_Reviews = critic[2], stringsAsFactors = FALSE)
   
-  #get pop rating
-  pop_rating <- usrv_link %>%
+  # Return the second critic review (if available)
+  if (length(critic) > 1) {
+    return(critic[2])  # Take the second item for the critic score
+  } else {
+    return(NA)  # If no critic review is found
+  }
+}
+
+# Function to scrape popularity rating for each show
+get_popularity_rating <- function(link) {
+  complete_link <- paste0("https://imdb.com", link)
+  show_page <- read_html(complete_link)
+  
+  # Extract popularity rating
+  pop_rating <- show_page %>%
     html_nodes('[data-testid="hero-rating-bar__popularity__score"]') %>%
     html_text()
   
-  #get user reviews of each shows
-  usrv <- read_html(paste0("https://imdb.com", usrv_link_page[1]))
-  usrv_count <- usrv %>%
-    html_nodes('[data-testid="tturv-total-reviews"]') %>%
+  # Return the popularity rating (if available)
+  if (length(pop_rating) > 1) {
+    return(pop_rating[2])  # The second item should be the popularity rating
+  } else {
+    return(NA)  # If no popularity rating is found
+  }
+}
+
+# Extract links to each show's page
+links <- webpage %>%
+  html_nodes("a.ipc-title-link-wrapper") %>%
+  html_attr("href")
+
+# Loop through each show's link and get the critic reviews
+critic_reviews <- sapply(links, get_critic_reviews)
+
+# Loop through each show's link and get the popularity rating
+popularity_ratings <- sapply(links, get_popularity_rating)
+
+# Ensure all data has the same length before combining
+max_length <- max(length(show_titles), length(show_ratings), length(num_votes), length(episode_counts), length(release_years), length(critic_reviews), length(popularity_ratings))
+show_titles <- rep(show_titles, length.out = max_length)
+show_ratings <- rep(show_ratings, length.out = max_length)
+num_votes <- rep(num_votes, length.out = max_length)
+episode_counts <- rep(episode_counts, length.out = max_length)
+release_years <- rep(release_years, length.out = max_length)
+critic_reviews <- rep(critic_reviews, length.out = max_length)
+popularity_ratings <- rep(popularity_ratings, length.out = max_length)
+
+# Combine into a data frame
+imdb_top_tv_shows <- data.frame(
+  Show_Title = show_titles,
+  Rating = show_ratings,
+  Votes = num_votes,
+  Episode_Count = episode_counts,
+  Release_Year = release_years,
+  Critic_Reviews = critic_reviews,
+  Popularity_Rating = popularity_ratings,
+  stringsAsFactors = FALSE
+)
+
+top_50_shows <- imdb_top_tv_shows %>%
+  slice(1:50)  # Get the top 50 shows
+
+# Print the top 50 shows
+print(top_50_shows)
+
+write.csv(top_50_shows, "Top_50_shows.csv")
+
+```
+
+
+2.
+
+```{r}
+# Load necessary libraries
+library(rvest)
+library(dplyr)
+library(stringr)
+
+# Define a function to scrape IMDb reviews
+scrape_imdb_reviews <- function(url) {
+  # Load the page content
+  page <- tryCatch(read_html(url), error = function(e) NULL)
+  if (is.null(page)) {
+    message("Failed to load page: ", url)
+    return(tibble())
+  }
+  
+  # Extract the title of the show using the correct selector
+  show_title <- page %>%
+    html_nodes("h1[data-testid='hero-title-block__title']") %>%
+    html_text(trim = TRUE)
+  
+  # Check if the show title was extracted successfully
+  if (length(show_title) == 0) {
+    message("Failed to extract show title for URL: ", url)
+    show_title <- NA  # Set to NA if the title is not found
+  }
+  
+  # Extract relevant review data
+  reviewers <- page %>% 
+    html_nodes("a.ipc-link.ipc-link--base") %>% 
+    html_text() %>% 
+    .[. != "Permalink"]
+  
+  dates <- page %>% 
+    html_nodes("li.ipc-inline-list__item.review-date") %>% 
     html_text()
   
-  return(data.frame( User_Reviews = usrv_count, Critic = critic_df, Popularity_Rating = pop_rating)) 
-})
-
- critics_df <- do.call(rbind, show_data)
-
-shows <- cbind(top_tv_shows, critics_df)
-shows
-```
-
-
-```{r}
-#2.
-# Define URL for Breaking Bad
-BreakingBad_urls <- "https://www.imdb.com/title/tt0903747/reviews/?ref_=tt_ov_urv"
-
-# Initialize list to store data frames
-df <- list()
-df_names <- "Breaking_Bad"
-
-# Read HTML session for the current URL
-session <- read_html(BreakingBad_urls)
-
-# Scrape reviewer names
-reviewer_name <- session %>%
-  html_nodes(".ipc-link.ipc-link--base") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape review dates
-review_date <- session %>%
-  html_nodes(".ipc-inline-list__item.review-date") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape user ratings (update CSS selector)
-user_rating <- session %>%
-  html_nodes(".ipc-rating-star--rating") %>%  # Example selector, verify it in the HTML
-  html_text() %>%
-  head(20)
-
-# Scrape reviews' titles
-review_title <- session %>%
-  html_nodes(".ipc-title__text") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape helpful reviews
-helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--up") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape not helpful reviews
-not_helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--down") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape text reviews
-text_reviews <- session %>%
-  html_nodes(".ipc-html-content-inner-div") %>%  
-  html_text() %>%
-  head(20)
-
-# Ensure each column has exactly 20 entries, filling with NA if fewer than 20 were scraped
-reviewer_name <- c(reviewer_name, rep(NA, 20 - length(reviewer_name)))[1:20]
-review_date <- c(review_date, rep(NA, 20 - length(review_date)))[1:20]
-user_rating <- c(user_rating, rep(NA, 20 - length(user_rating)))[1:20]
-review_title <- c(review_title, rep(NA, 20 - length(review_title)))[1:20]
-helpful_reviews <- c(helpful_reviews, rep(NA, 20 - length(helpful_reviews)))[1:20]
-not_helpful_reviews <- c(not_helpful_reviews, rep(NA, 20 - length(not_helpful_reviews)))[1:20]
-text_reviews <- c(text_reviews, rep(NA, 20 - length(text_reviews)))[1:20]
-
-# Create a temporary data frame for the current URL
-dfTemp <- data.frame(
-  reviewer_name = reviewer_name,
-  review_date = review_date,
-  user_rating = user_rating,
-  review_title = review_title,
-  helpful_reviews = helpful_reviews,
-  not_helpful_reviews = not_helpful_reviews,
-  text_reviews = text_reviews,
-  stringsAsFactors = FALSE
+  ratings <- page %>% 
+    html_nodes("span.ipc-rating-star--rating") %>% 
+    html_text() %>% 
+    as.numeric()
   
+  titles <- page %>% 
+    html_nodes("h3.ipc-title__text") %>% 
+    html_text()
+  
+  helpful_votes <- page %>% 
+    html_nodes("span.ipc-voting__label__count.ipc-voting__label__count--up") %>% 
+    html_text() %>% 
+    as.numeric()
+  
+  review_texts <- page %>% 
+    html_nodes("div.ipc-html-content-inner-div") %>% 
+    html_text()
+  
+  # Adjust lengths by padding shorter vectors with NA
+  max_length <- max(length(reviewers), length(dates), length(ratings), length(titles), length(helpful_votes), length(review_texts))
+  
+  # Pad vectors with NA if they are shorter than max_length
+  reviewers <- c(reviewers, rep(NA, max_length - length(reviewers)))
+  dates <- c(dates, rep(NA, max_length - length(dates)))
+  ratings <- c(ratings, rep(NA, max_length - length(ratings)))
+  titles <- c(titles, rep(NA, max_length - length(titles)))
+  helpful_votes <- c(helpful_votes, rep(NA, max_length - length(helpful_votes)))
+  review_texts <- c(review_texts, rep(NA, max_length - length(review_texts)))
+  
+  # Combine data into a tibble
+  tibble(
+    show_title = rep(show_title, max_length),  # Add the show title to each review
+    reviewer_name = reviewers,
+    review_date = dates,
+    rating = ratings,
+    review_title = titles,
+    helpful_votes = helpful_votes,
+    review_text = review_texts
+  )
+}
+
+# List of IMDb links
+links <- c(
+  "https://www.imdb.com/title/tt7366338/reviews/?ref_=tt_urv_sm",
+  "https://www.imdb.com/title/tt0903747/reviews/?ref_=tt_urv_sm",
+  "https://www.imdb.com/title/tt5491994/reviews/?ref_=tt_urv_sm",
+  "https://www.imdb.com/title/tt0795176/reviews/?ref_=tt_urv_sm",
+  "https://www.imdb.com/title/tt0185906/reviews/?ref_=tt_urv_sm"
 )
 
-# Append the temporary data frame to the list with a custom name
-df[[df_names]] <- dfTemp
+# Initialize an empty tibble to store all reviews
+all_reviews <- tibble()
 
-# View the data frame for "Breaking Bad"
-print(df$Breaking_Bad)
+# Loop through each link and scrape reviews
+for (link in links) {
+  reviews <- scrape_imdb_reviews(link)
+  
+  # Check if reviews are scraped successfully and limit to 20 reviews per link
+  if (nrow(reviews) > 0) {
+    reviews <- reviews %>% slice(1:20)  # Limit to the first 20 reviews per link
+    all_reviews <- bind_rows(all_reviews, reviews)
+  }
+  
+
+}
+
+# View the first 20 reviews after scraping all links
+print(all_reviews)
+
+
+write.csv(all_reviews, "IMDb_reviews.csv")
+
 
 ```
-
-
+3.
 ```{r}
-# Define URL for Planet Earth II
-PlanetEarthII_urls <- "https://www.imdb.com/title/tt5491994/reviews/?ref_=tt_ov_urv"
-
-# Initialize list to store data frames
-df <- list()
-df_names <- "Planet_Earth_II"
-
-# Read HTML session for the current URL
-session <- read_html(PlanetEarthII_urls)
-
-# Scrape reviewer names
-reviewer_name <- session %>%
-  html_nodes(".ipc-link.ipc-link--base") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape review dates
-review_date <- session %>%
-  html_nodes(".ipc-inline-list__item.review-date") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape user ratings (update CSS selector)
-# First, inspect the correct selector for user rating from the page structure.
-user_rating <- session %>%
-  html_nodes(".ipc-rating-star--rating") %>%  # Adjust this selector if needed (check the page source)
-  html_text() %>%
-  head(20)
-
-# Scrape reviews' titles
-review_title <- session %>%
-  html_nodes(".ipc-title__text") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape helpful reviews
-helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--up") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape not helpful reviews
-not_helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--down") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape text reviews
-text_reviews <- session %>%
-  html_nodes(".ipc-html-content-inner-div") %>%  
-  html_text() %>%
-  head(20)
-
-# Handle case where some elements might be missing, ensuring we have exactly 20 entries
-reviewer_name <- c(reviewer_name, rep(NA, 20 - length(reviewer_name)))[1:20]
-review_date <- c(review_date, rep(NA, 20 - length(review_date)))[1:20]
-user_rating <- c(user_rating, rep(NA, 20 - length(user_rating)))[1:20]
-review_title <- c(review_title, rep(NA, 20 - length(review_title)))[1:20]
-helpful_reviews <- c(helpful_reviews, rep(NA, 20 - length(helpful_reviews)))[1:20]
-not_helpful_reviews <- c(not_helpful_reviews, rep(NA, 20 - length(not_helpful_reviews)))[1:20]
-text_reviews <- c(text_reviews, rep(NA, 20 - length(text_reviews)))[1:20]
-
-# Create a temporary data frame for the current URL
-dfTemp <- data.frame(
-  reviewer_name = reviewer_name,
-  review_date = review_date,
-  user_rating = user_rating,
-  review_title = review_title,
-  helpful_reviews = helpful_reviews,
-  not_helpful_reviews = not_helpful_reviews,
-  text_reviews = text_reviews,
-  stringsAsFactors = FALSE
-)
-
-# Append the temporary data frame to the list with a custom name
-df[[df_names]] <- dfTemp
-
-# View the data frame for "Planet Earth II"
-print(df$Planet_Earth_II)
-```
-
-```{r}
-# Define URL for Planet Earth
-PlanetEarth_urls <- "https://www.imdb.com/title/tt0795176/reviews/?ref_=tt_ov_urv"
-
-# Initialize list to store data frames
-df <- list()
-df_names <- "Planet_Earth"
-
-# Read HTML session for the current URL
-session <- read_html(PlanetEarth_urls)
-
-# Scrape reviewer names
-reviewer_name <- session %>%
-  html_nodes(".ipc-link.ipc-link--base") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape review dates
-review_date <- session %>%
-  html_nodes(".ipc-inline-list__item.review-date") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape user ratings (corrected CSS selector)
-user_rating <- session %>%
-  html_nodes(".ipc-rating-star--rating") %>%  # Adjust this selector if needed (inspect page for correct class)
-  html_text() %>%
-  head(20)
-
-# Scrape reviews' titles
-review_title <- session %>%
-  html_nodes(".ipc-title__text") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape helpful reviews
-helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--up") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape not helpful reviews
-not_helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--down") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape text reviews
-text_reviews <- session %>%
-  html_nodes(".ipc-html-content-inner-div") %>%  
-  html_text() %>%
-  head(20)
-
-
-# Handle case where some elements might be missing, ensuring we have exactly 20 entries
-reviewer_name <- c(reviewer_name, rep(NA, 20 - length(reviewer_name)))[1:20]
-review_date <- c(review_date, rep(NA, 20 - length(review_date)))[1:20]
-user_rating <- c(user_rating, rep(NA, 20 - length(user_rating)))[1:20]
-review_title <- c(review_title, rep(NA, 20 - length(review_title)))[1:20]
-helpful_reviews <- c(helpful_reviews, rep(NA, 20 - length(helpful_reviews)))[1:20]
-not_helpful_reviews <- c(not_helpful_reviews, rep(NA, 20 - length(not_helpful_reviews)))[1:20]
-text_reviews <- c(text_reviews, rep(NA, 20 - length(text_reviews)))[1:20]
-
-# Create a temporary data frame for the current URL
-dfTemp <- data.frame(
-  reviewer_name = reviewer_name,
-  review_date = review_date,
-  user_rating = user_rating,
-  review_title = review_title,
-  helpful_reviews = helpful_reviews,
-  not_helpful_reviews = not_helpful_reviews,
-  text_reviews = text_reviews,
-  stringsAsFactors = FALSE
-)
-
-# Append the temporary data frame to the list with a custom name
-df[[df_names]] <- dfTemp
-
-# View the data frame for "Planet Earth"
-print(df$Planet_Earth)
-
-```
-
-```{r}
-# Define URL for Band Of Brothers
-BandOfBrothers_urls <- "https://www.imdb.com/title/tt0185906/reviews/?ref_=tt_ov_urv"
-
-# Initialize list to store data frames
-df <- list()
-df_names <- "Band_Of_Brothers"
-
-# Read HTML session for the current URL
-session <- read_html(BandOfBrothers_urls)
-
-# Scrape reviewer names
-reviewer_name <- session %>%
-  html_nodes(".ipc-link.ipc-link--base") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape review dates
-review_date <- session %>%
-  html_nodes(".ipc-inline-list__item.review-date") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape user ratings (corrected CSS selector)
-user_rating <- session %>%
-  html_nodes(".ipc-rating-star--rating") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape reviews' titles
-review_title <- session %>%
-  html_nodes(".ipc-title__text") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape helpful reviews
-helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--up") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape not helpful reviews
-not_helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--down") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape text reviews
-text_reviews <- session %>%
-  html_nodes(".ipc-html-content-inner-div") %>%  
-  html_text() %>%
-  head(20)
-
-
-# Handle case where some elements might be missing, ensuring we have exactly 20 entries
-reviewer_name <- c(reviewer_name, rep(NA, 20 - length(reviewer_name)))[1:20]
-review_date <- c(review_date, rep(NA, 20 - length(review_date)))[1:20]
-user_rating <- c(user_rating, rep(NA, 20 - length(user_rating)))[1:20]
-review_title <- c(review_title, rep(NA, 20 - length(review_title)))[1:20]
-helpful_reviews <- c(helpful_reviews, rep(NA, 20 - length(helpful_reviews)))[1:20]
-not_helpful_reviews <- c(not_helpful_reviews, rep(NA, 20 - length(not_helpful_reviews)))[1:20]
-text_reviews <- c(text_reviews, rep(NA, 20 - length(text_reviews)))[1:20]
-
-# Create a temporary data frame for the current URL
-dfTemp <- data.frame(
-  reviewer_name = reviewer_name,
-  review_date = review_date,
-  user_rating = user_rating,
-  review_title = review_title,
-  helpful_reviews = helpful_reviews,
-  not_helpful_reviews = not_helpful_reviews,
-  text_reviews = text_reviews,
-  stringsAsFactors = FALSE
-)
-
-# Append the temporary data frame to the list with a custom name
-df[[df_names]] <- dfTemp
-
-# View the data frame for "band of brothers"
-print(df$Band_Of_Brothers)
-
-```
-
-
-```{r}
-# Define URL for Chernobyl
-Chernobyl_urls <- "https://www.imdb.com/title/tt7366338/reviews/?ref_=tt_ov_urv"
-
-# Initialize list to store data frames
-df <- list()
-df_names <- "Chernobyl"
-
-# Read HTML session for the current URL
-session <- read_html(Chernobyl_urls)
-
-# Scrape reviewer names
-reviewer_name <- session %>%
-  html_nodes(".ipc-link.ipc-link--base") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape review dates
-review_date <- session %>%
-  html_nodes(".ipc-inline-list__item.review-date") %>% 
-  html_text() %>%
-  head(20)
-
-# Scrape user ratings (corrected CSS selector)
-user_rating <- session %>%
-  html_nodes(".ipc-rating-star--rating") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape reviews' titles
-review_title <- session %>%
-  html_nodes(".ipc-title__text") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape helpful reviews
-helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--up") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape not helpful reviews
-not_helpful_reviews <- session %>%
-  html_nodes(".ipc-voting__label__count.ipc-voting__label__count--down") %>%  
-  html_text() %>%
-  head(20)
-
-# Scrape text reviews
-text_reviews <- session %>%
-  html_nodes(".ipc-html-content-inner-div") %>%  
-  html_text() %>%
-  head(20)
-
-# Handle case where some elements might be missing, ensuring we have exactly 20 entries
-reviewer_name <- c(reviewer_name, rep(NA, 20 - length(reviewer_name)))[1:20]
-review_date <- c(review_date, rep(NA, 20 - length(review_date)))[1:20]
-user_rating <- c(user_rating, rep(NA, 20 - length(user_rating)))[1:20]
-review_title <- c(review_title, rep(NA, 20 - length(review_title)))[1:20]
-helpful_reviews <- c(helpful_reviews, rep(NA, 20 - length(helpful_reviews)))[1:20]
-not_helpful_reviews <- c(not_helpful_reviews, rep(NA, 20 - length(not_helpful_reviews)))[1:20]
-text_reviews <- c(text_reviews, rep(NA, 20 - length(text_reviews)))[1:20]
-
-# Create a temporary data frame for the current URL
-dfTemp <- data.frame(
-  reviewer_name = reviewer_name,
-  review_date = review_date,
-  user_rating = user_rating,
-  review_title = review_title,
-  helpful_reviews = helpful_reviews,
-  not_helpful_reviews = not_helpful_reviews,
-  text_reviews = text_reviews,
-  stringsAsFactors = FALSE
-)
-
-# Append the temporary data frame to the list with a custom name
-df[[df_names]] <- dfTemp
-
-# View the data frame for "Chernobyl"
-print(df$Chernobyl)
-```
-
-
-```{r}
-#3.
-
-# Convert the 'Year' column to numeric if it isn't already
-top_tv_shows$Year <- as.numeric(top_tv_shows$Year)
-
-# Group the data by Year and count the number of shows per year
-shows_by_year <- top_tv_shows %>%
-  group_by(Year) %>%
-  summarise(Count = n())
-
-# Plot the number of shows released by year
-ggplot(shows_by_year, aes(x = Year, y = Count)) +
-  geom_line(color = "blue", size = 1) +
-  geom_point(color = "red", size = 2) +
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# Count the number of TV shows released per year
+tv_shows_by_year <- imdb_top_tv_shows %>%
+  group_by(Release_Year) %>%
+  summarise(Number_of_Shows = n())
+
+# Plot the time series graph
+ggplot(tv_shows_by_year, aes(x = Release_Year, y = Number_of_Shows)) +
+  geom_line() +  # Add a line plot
+  geom_point() +  # Add points at each data point
   labs(title = "Number of TV Shows Released by Year",
        x = "Year",
-       y = "Number of TV Shows") +
-  scale_y_log10() +  # Use log scale for y-axis
+       y = "Number of TV Shows Released") +
   theme_minimal()
 
-# Find the year with the most TV shows released
-most_shows_year <- shows_by_year %>%
-  filter(Count == max(Count))
-
-# Print the year with the most releases
-print(most_shows_year)
 ```
+4 and 5
 
 
-
-2. Extracting Amazon Product Reviews
-```{r}
-#4. URLs
-urls <- c('https://www.amazon.com/s?k=PC&crid=3O0HDEISP3NAZ&sprefix=pc%2Caps%2C610&ref=nb_sb_noss_1', 
-          'https://www.amazon.com/s?k=graphics+card&crid=4BJILUAEFT5I&sprefix=graphics%2Caps%2C372&ref=nb_sb_ss_ts-doa-p_1_8',
-          'https://www.amazon.com/s?k=keyboard&crid=3647UWDU9H0TF&sprefix=keyboa%2Caps%2C331&ref=nb_sb_noss_2',
-          'https://www.amazon.com/s?k=mouse&crid=QMZNC639VEYB&sprefix=mouse%2Caps%2C336&ref=nb_sb_ss_ts-doa-p_2_5',
-          'https://www.amazon.com/s?k=motherboard&crid=1ZHTORVTCHK1A&sprefix=motherb%2Caps%2C346&ref=nb_sb_noss_2')
-```
 
 
 ```{r}
-#5
-df <- list()
+library(polite)
+polite::use_manners(save_as = 'polite_scrape.R')
 
-for (i in seq_along(urls)) {
+url <- 'https://www.amazon.com'
+
+
+session <- bow(url,
+               user_agent = "Educational")
+session
+```
+
+```{r}
+library(rvest)
+library(dplyr)
+
+scrape_amazon_products <- function(base_url, category, num_products = 30) {
+  all_data <- data.frame()
+  page_number <- 1
   
-  session <- bow(urls[i], user_agent = "Educational")
+  while (nrow(all_data) < num_products) {
+    # Construct the URL for the current page
+    url <- paste0(base_url, "&page=", page_number)
+    message("Scraping: ", url)
+    
+    page <- read_html(url)
+    
+    product_titles <- page %>%
+      html_nodes("span.a-text-normal") %>% 
+      html_text(trim = TRUE)
+    
+    product_titles <- product_titles[product_titles != "Check each product page for other buying options."]
+
+    price <- page %>% 
+      html_nodes('.a-price .a-offscreen') %>% 
+      html_text(trim = TRUE)
+    
+    ratings <- page %>% 
+      html_nodes('span.a-icon-alt') %>% 
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  
+      as.numeric()
+    
+
+
+    reviews <- page %>%
+      html_nodes('.s-link-style .s-underline-text') %>% 
+      html_text(trim = TRUE)
+    
+    descriptions <- page %>%
+      html_nodes("span.a-text-normal") %>% 
+      html_text(trim = TRUE)
+    
+    descriptions <- descriptions[descriptions != "Check each product page for other buying options."]
+    
+    min_length <- min(length(product_titles), length(price), length(ratings), length(descriptions), length(reviews))
+    if (min_length == 0) break  # Exit if no products are found on the page
+    
+    data <- data.frame(
+      ProductTitle = head(product_titles, min_length),
+      Price = head(price, min_length),
+      Category = rep(category, min_length),
+      Ratings = head(ratings, min_length),
+      Reviews = head(reviews, min_length),
+      Description = head(descriptions, min_length)
+    )
+    
+    
+    all_data <- bind_rows(all_data, data)
+    
+    page_number <- page_number + 1
+  }
   
-  product_name <- scrape(session) %>% html_nodes('h2.a-size-mini') %>% html_text() %>% head(30) 
+  all_data <- head(all_data, num_products)
   
+
+  all_data$ProductTitle <- paste0(seq_len(nrow(all_data)), ". ", all_data$ProductTitle)
   
-  product_description <- scrape(session) %>% html_nodes('div.productDescription') %>% html_text() %>% head(30) 
-  
-  
-  product_rating <- scrape(session) %>% html_nodes('span.a-icon-alt') %>% html_text() %>% head(30)  
-  ratings <- as.numeric(str_extract(product_rating, "\\d+\\.\\d"))
-  
-  
-  product_price <- scrape(session) %>% html_nodes('span.a-price') %>%  html_text() %>% head(30) 
-  price <- as.numeric(str_extract(product_price, "\\d+\\.\\d+"))
-  
-  
-  product_review <- scrape(session) %>% html_nodes('div.review-text-content') %>% html_text() %>% head(30)  
-  
-  
-  dfTemp <- data.frame(Product_Name = product_name[1:30], Description = product_description[1:30], Rating = ratings[1:30], Price = price[1:30], stringsAsFactors = FALSE)
-  
-  df[[i]] <- dfTemp
+  return(all_data)
 }
 
-print(df[[1]])
-print(df[[2]])
-print(df[[3]])
-print(df[[4]])
-print(df[[5]])
-```
+pc_url <- "https://www.amazon.com/s?k=pc"
+graphics_card_url <- "https://www.amazon.com/s?k=graphics+card"
+keyboard_url <- "https://www.amazon.com/s?k=keyboard"
+mouse_url <- "https://www.amazon.com/s?k=mouse"
+motherboard_url <- "https://www.amazon.com/s?k=motherboard"
 
+pc_products <- scrape_amazon_products(pc_url, "PC", 30)
+graphics_card_products <- scrape_amazon_products(graphics_card_url, "Graphics Card", 30)
+keyboard_products <- scrape_amazon_products(keyboard_url, "Keyboard", 30)
+mouse_products <- scrape_amazon_products(mouse_url, "Mouse", 30)
+motherboard_products <- scrape_amazon_products(motherboard_url, "Motherboard", 30)
+
+all_products <- bind_rows(pc_products, graphics_card_products, keyboard_products, mouse_products, motherboard_products)
+
+all_products
+
+write.csv(all_products, "Amazon_products.csv")
+```
+6. The data we have extracted is  that we scrape 30 products from each 6 categories and we get the product name, price, category, ratings, reviews, and description of every product.
+
+7. The use case for our data that we have extracted is for market research.
+
+8. The graphs provide insights into pricing trends, customer satisfaction, and product popularity across categories, helping identify competitive pricing and top-performing products. They also reveal correlations between ratings and reviews, indicating which products are both highly rated and widely purchased.
 
 ```{r}
-#6. 
+library(ggplot2)
+library(dplyr)
 
-#The code extracts data from Amazon product listing pages based on different search queries, such as "PC's", "Graphics Cards", "Keyboards", "Mouse", and "Motherboards". For each URL, the following information is extracted: Product Name along with its description(if available), Rating, and Price.
-```
+# Load data
+all_products <- read.csv("Amazon_products.csv")
 
+# Clean up price data (remove $ and convert to numeric)
+all_products$Price <- as.numeric(gsub("[$,]", "", all_products$Price))
 
-```{r}
-#7
+# Filter out NA or missing data
+all_products <- all_products %>%
+  filter(!is.na(Price), !is.na(Ratings), !is.na(Reviews))
 
-#This data can be used to compare product popularity, analyze price trends, examine the relationship between price and quality, and conduct market research to inform new product development in each category.
-```
-
-
-```{r}
-#8
-combined_df <- do.call(rbind, df)
-combined_df$Category <- rep(c("PC's", "Graphics Cards", "Keyboards", "Mouse", "Motherboards"), each = 30)
-
-avg_rating <- combined_df %>%
-  group_by(Category) %>%
-  summarize(Average_Rating = mean(Rating, na.rm = TRUE))
-
-ggplot(avg_rating, aes(x = Category, y = Average_Rating, fill = Category)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Average Rating per Category", x = "Category", y = "Average Rating") +
+# Graph 1: Price Distribution
+ggplot(all_products, aes(x = Price)) +
+  geom_histogram(binwidth = 50, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Product Prices", x = "Price ($)", y = "Count") +
   theme_minimal()
 
-avg_price <- combined_df %>%
+# Graph 2: Average Ratings by Category
+avg_ratings <- all_products %>%
   group_by(Category) %>%
-  summarize(Average_Price = mean(Price, na.rm = TRUE))
+  summarize(AverageRating = mean(Ratings, na.rm = TRUE))
 
-ggplot(avg_price, aes(x = Category, y = Average_Price, fill = Category)) +
-  geom_bar(stat = "identity") +
-  labs(title = "Average Price per Category", x = "Category", y = "Average Price") +
+ggplot(avg_ratings, aes(x = Category, y = AverageRating, fill = Category)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(title = "Average Ratings by Category", x = "Category", y = "Average Rating") +
   theme_minimal()
 
-ggplot(combined_df, aes(x = Price, y = Rating, color = Category)) +
+# Graph 3: Number of Reviews by Category
+total_reviews <- all_products %>%
+  group_by(Category) %>%
+  summarize(TotalReviews = sum(as.numeric(gsub("[^0-9]", "", Reviews)), na.rm = TRUE))
+
+ggplot(total_reviews, aes(x = Category, y = TotalReviews, fill = Category)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(title = "Total Number of Reviews by Category", x = "Category", y = "Total Reviews") +
+  theme_minimal()
+
+# Graph 4: Correlation Between Ratings and Reviews
+ggplot(all_products, aes(x = Ratings, y = as.numeric(gsub("[^0-9]", "", Reviews)))) +
+  geom_point(alpha = 0.6, color = "purple") +
+  labs(title = "Correlation Between Ratings and Reviews", x = "Ratings", y = "Number of Reviews") +
+  theme_minimal()
+
+```
+9.  
+```{r}
+library(ggplot2)
+
+ggplot(all_products, aes(x = Price, y = Ratings, color = Category)) +
   geom_point() +
-  labs(title = "Price vs Rating Across Categories", x = "Price", y = "Rating") +
-  theme_minimal()
+  facet_wrap(~ Category, scales = "free") +
+  labs(title = "Ratings vs Price for Each Category",
+       x = "Price ($)",
+       y = "Ratings") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+10. Ranking by ratings sorts products from the highest to the lowest-rated, showcasing the top customer-reviewed items. Ranking by price can be done in ascending order (cheapest to most expensive) or descending order (most expensive to cheapest), helping users select products based on their budget.
+
+```{r}
+
+all_products <- read.csv("Amazon_products.csv")
+
+
+str(all_products)
+
+```
+```{r}
+# Load the CSV file containing the products
+all_products <- read.csv("Amazon_products.csv")
+
+# Ensure the Ratings column is numeric for sorting
+all_products$Ratings <- as.numeric(all_products$Ratings)
+
+# Check the structure to make sure Ratings are correctly formatted
+str(all_products)
+
+library(dplyr)
+
+# Rank products by Ratings in descending order
+ranked_by_ratings <- all_products %>%
+  arrange(desc(Ratings))
+
+# View the top-ranked products based on ratings
+head(ranked_by_ratings, 150)  # Display the top 10 highest-rated products
+
+
 ```
 
 ```{r}
-#9
-ggplot(combined_df, aes(x = Category, y = Rating, fill = Category)) +
-  geom_boxplot() +
-  labs(title = "Distribution of Ratings by Category", x = "Category", y = "Rating") +
-  theme_minimal()
+# Load the CSV file containing the products
+all_products <- read.csv("Amazon_products.csv")
 
-ggplot(combined_df, aes(x = Category, y = Price, fill = Category)) +
-  geom_boxplot() +
-  labs(title = "Distribution of Prices by Category", x = "Category", y = "Price") +
-  theme_minimal()
+# Clean and convert the Price column to numeric (if it includes "$" signs)
+all_products$Price <- as.numeric(gsub("\\$", "", all_products$Price))
+
+# Check the structure to ensure Price is correctly formatted
+str(all_products)
+
+library(dplyr)
+
+# Rank products by Price in ascending order (cheapest first)
+ranked_by_price_ascending <- all_products %>%
+  arrange(Price)
+
+# Alternatively, rank products by Price in descending order (most expensive first)
+ranked_by_price_descending <- all_products %>%
+  arrange(desc(Price))
+
+# View the top-ranked products based on price (descending order)
+head(ranked_by_price_descending, 150)  # Display top 10 most expensive products
+
 ```
 
 
-```{r}
-#10
-ranked_data <- lapply(df, function(df_category) {
-  df_category %>%
-    arrange(desc(Rating), Price) %>%
-    mutate(Rank = row_number()) %>%
-    select(Rank, everything()) 
-})
 
-categories <- c("PC's", "Graphics Cards", "Keyboards", "Mouse", "Motherboards")
-for (i in seq_along(ranked_data)) {
-  ranked_data[[i]]$Category <- categories[i]
+```{r}
+
+# Load necessary libraries
+library(rvest)
+library(dplyr)
+library(stringr)
+
+# Define product links and product names
+product_links <- c(
+  "https://www.amazon.com/TeckNet-Portable-Wireless-Receiver-Adjustment/dp/B001DHECXA/ref=sr_1_2_sspa",
+  "https://www.amazon.com/EVGA-Customizable-Profiles-Ambidextrous-905-W1-12WH-KR/dp/B09QBYWN8T/ref=sr_1_3",
+  "https://www.amazon.com/Logitech-Wireless-Mouse-M185-Swift/dp/B004YAVF8I/ref=sr_1_4",
+  "https://www.amazon.com/Logitech-LIGHTSPEED-Wireless-Gaming-Mouse/dp/B07CMS5Q6P/ref=sr_1_5",
+  "https://www.amazon.com/Razer-Basilisk-Customizable-Ergonomic-Gaming/dp/B09C13PZX7/ref=sr_1_6",
+  "https://www.amazon.com/Micropack-Vertical-Multi-Device-Bluetooth-Adjustable/dp/B0C7GMQRW3/ref=sr_1_17",
+  "https://www.amazon.com/RAPIQUE-Bluetooth-Wireless-Mouse-Compatibility/dp/B0CYZ2VKGP/ref=sr_1_18",
+  "https://www.amazon.com/ASUS-ROG-Wireless-Magnetic-Programmable/dp/B09726KT4R/ref=sr_1_20",
+  "https://www.amazon.com/Logitech-910-005867-M575-Latin-America/dp/B08TLYK78K/ref=sr_1_21",
+  "https://www.amazon.com/Logitech-Superlight-Lightspeed-Lightweight-Programmable/dp/B09NBWL8J5/ref=sr_1_22"
+)
+
+product_names <- c(
+  "TeckNet Portable Wireless Mouse",
+  "EVGA Customizable Ambidextrous Mouse",
+  "Logitech Wireless Mouse M185",
+  "Logitech LIGHTSPEED Wireless Gaming Mouse",
+  "Razer Basilisk Customizable Ergonomic Gaming Mouse",
+  "Micropack Vertical Multi-Device Bluetooth Adjustable",
+  "RAPIQUE Bluetooth Wireless Mouse Compatibility",
+  "ASUS ROG Wireless Magnetic Programmable",
+  "Logitech 910-005867 M575 Latin America",
+  "Logitech Superlight Lightspeed Lightweight Programmable"
+)
+
+category <- "Mouse"
+
+# Initialize an empty dataframe
+all_reviews <- data.frame()
+
+# Loop through each product
+for (i in seq_along(product_links)) {
+  # Get the product link and name
+  url <- product_links[i]
+  product_name <- product_names[i]
+  
+  # Try scraping reviews
+  try({
+    webpage <- read_html(url)
+    
+    # Extract review sections
+    reviews <- webpage %>%
+      html_nodes(".review")
+    
+    # Extract reviewer names
+    reviewer_names <- reviews %>%
+      html_nodes(".a-profile-name") %>%
+      html_text(trim = TRUE)
+    
+    # Extract review dates
+    review_dates <- reviews %>%
+      html_nodes(".review-date") %>%
+      html_text(trim = TRUE)
+    
+    # Extract review titles
+    review_titles <- reviews %>%
+      html_nodes(".review-title span") %>%
+      html_text(trim = TRUE)
+    
+    # Extract review comments
+    review_comments <- reviews %>%
+      html_nodes(".review-text-content span") %>%
+      html_text(trim = TRUE)
+    
+    # Extract verified purchase labels
+    verified_purchases <- reviews %>%
+      html_nodes(".review-vp-label") %>%
+      html_text(trim = TRUE)
+    
+    # Extract star ratings
+    star_ratings <- reviews %>%
+      html_nodes(".a-icon-alt") %>%
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  # Extract the numeric rating
+      as.numeric()
+    
+    # Limit to the first 20 reviews
+    max_reviews <- min(20, length(reviewer_names))
+    reviewer_names <- reviewer_names[1:max_reviews]
+    review_dates <- review_dates[1:max_reviews]
+    review_titles <- review_titles[1:max_reviews]
+    review_comments <- review_comments[1:max_reviews]
+    verified_purchases <- verified_purchases[1:max_reviews]
+    star_ratings <- star_ratings[1:max_reviews]
+    
+    # Create a dataframe for this product
+    review_data <- data.frame(
+      Category = rep(category, max_reviews),
+      ProductName = rep(product_name, max_reviews),
+      Reviewer = reviewer_names,
+      Date = review_dates,
+      Title = review_titles,
+      Comment = review_comments,
+      StarRating = star_ratings,
+      VerifiedPurchase = verified_purchases,
+      stringsAsFactors = FALSE
+    )
+    
+    # Append to the main dataframe
+    all_reviews <- bind_rows(all_reviews, review_data)
+  }, silent = TRUE)
 }
 
-ranked_combined_df <- do.call(rbind, ranked_data)
-ranked_combined_df <- ranked_combined_df %>% 
-  arrange(Category, Rank) %>% 
-  group_by(Category) %>% 
-  slice(1:5) 
+print(all_reviews)
 
-print(ranked_combined_df)
+write.csv(all_reviews, "Mouse_reviews.csv")
+
+```
+
+
+```{r}
+library(rvest)
+library(dplyr)
+library(stringr)
+
+product_links <- c(
+  "https://www.amazon.com/MSI-MAG-B550-TOMAHAWK-Motherboard/dp/B089CWDHFZ/ref=sr_1_1",
+  "https://www.amazon.com/JUXIESHI-Motheboard-Support-Desktop-HDMI-Compatible/dp/B0CYBX123R/ref=sr_1_2",
+  "https://www.amazon.com/ASUS-ROG-Strix-Gaming-Motherboard/dp/B08F9VP2RC/ref=sr_1_3",
+  "https://www.amazon.com/ASUS-TUF-Intel%C2%AE12th-Motherboard-Thunderbolt/dp/B0BQD58D96/ref=sr_1_4",
+  "https://www.amazon.com/MSI-B550-Gaming-GEN3-Motherboard/dp/B0BHCL4YVS/ref=sr_1_5",
+  "https://www.amazon.com/ASUS-B550-PLUS-Motherboard-DisPlayPort-Addressable/dp/B089CT5GDM/ref=sr_1_6",
+  "https://www.amazon.com/GIGABYTE-B650-Warranty-EZ-Latch-Motherboard/dp/B0BH7GTY9C/ref=sr_1_7",
+  "https://www.amazon.com/MSI-B760-Motherboard-Supports-Processors/dp/B0C15THTK7/ref=sr_1_8",
+  "https://www.amazon.com/GIGABYTE-B760M-DDR4-Motherboard-EZ-Latch/dp/B0D54QJ9CJ/ref=sr_1_9",
+  "https://www.amazon.com/MSI-B650-Tomahawk-Motherboard-Processors/dp/B0BHCCNSRH/ref=sr_1_10"
+)
+
+product_names <- c(
+  "MSI MAG B550 TOMAHAWK Motherboard",
+  "JUXIESHI Motherboard Support Desktop HDMI Compatible",
+  "ASUS ROG Strix Gaming Motherboard",
+  "ASUS TUF Intel® 12th Motherboard Thunderbolt",
+  "MSI B550 Gaming GEN3 Motherboard",
+  "ASUS B550-PLUS Motherboard",
+  "GIGABYTE B650 Warranty EZ-Latch Motherboard",
+  "MSI B760 Motherboard Supports Processors",
+  "GIGABYTE B760M DDR4 Motherboard EZ-Latch",
+  "MSI B650 Tomahawk Motherboard Processors"
+)
+
+category <- "Motherboard"
+
+all_reviews <- data.frame()
+
+for (i in seq_along(product_links)) {
+  # Get the product link and name
+  url <- product_links[i]
+  product_name <- product_names[i]
+  
+  try({
+    webpage <- read_html(url)
+    
+    reviews <- webpage %>%
+      html_nodes(".review")
+    
+    reviewer_names <- reviews %>%
+      html_nodes(".a-profile-name") %>%
+      html_text(trim = TRUE)
+    
+    review_dates <- reviews %>%
+      html_nodes(".review-date") %>%
+      html_text(trim = TRUE)
+    
+    review_titles <- reviews %>%
+      html_nodes(".review-title span") %>%
+      html_text(trim = TRUE)
+    
+    review_comments <- reviews %>%
+      html_nodes(".review-text-content span") %>%
+      html_text(trim = TRUE)
+    
+    verified_purchases <- reviews %>%
+      html_nodes(".review-vp-label") %>%
+      html_text(trim = TRUE)
+    
+    star_ratings <- reviews %>%
+      html_nodes(".a-icon-alt") %>%
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  # Extract the numeric rating
+      as.numeric()
+    
+    max_reviews <- min(20, length(reviewer_names))
+    reviewer_names <- reviewer_names[1:max_reviews]
+    review_dates <- review_dates[1:max_reviews]
+    review_titles <- review_titles[1:max_reviews]
+    review_comments <- review_comments[1:max_reviews]
+    verified_purchases <- verified_purchases[1:max_reviews]
+    star_ratings <- star_ratings[1:max_reviews]
+    
+    review_data <- data.frame(
+      Category = rep(category, max_reviews),
+      ProductName = rep(product_name, max_reviews),
+      Reviewer = reviewer_names,
+      Date = review_dates,
+      Title = review_titles,
+      Comment = review_comments,
+      StarRating = star_ratings,
+      VerifiedPurchase = verified_purchases,
+      stringsAsFactors = FALSE
+    )
+    
+    all_reviews <- bind_rows(all_reviews, review_data)
+  }, silent = TRUE)
+}
+
+print(all_reviews)
+
+write.csv(all_reviews, "Motherboard_reviews.csv")
+
+
+```
+
+```{r}
+library(rvest)
+library(dplyr)
+library(stringr)
+
+product_links <- c(
+  "https://www.amazon.com/AmazonBasics-Matte-Keyboard-QWERTY-Layout/dp/B07WJ5D3H4/ref=sr_1_1",
+  "https://www.amazon.com/RedThunder-Wireless-Rechargeable-Mechanical-Anti-ghosting/dp/B09BR46F63/ref=sr_1_2",
+  "https://www.amazon.com/SteelSeries-Worlds-Fastest-Mechanical-Keyboard/dp/B0BF64DN6H/ref=sr_1_3",
+  "https://www.amazon.com/AmazonBasics-Matte-Keyboard-QWERTY-Layout/dp/B07WJ5D3H4/ref=sr_1_4",
+  "https://www.amazon.com/Redragon-S101-Keyboard-Ergonomic-Programmable/dp/B00NLZUM36/ref=sr_1_5",
+  "https://www.amazon.com/Logitech-Programmable-Backlighting-Bluetooth-Rechargeable/dp/B0BKW3LB2B/ref=sr_1_6",
+  "https://www.amazon.com/Amazon-Basics-Extension-Keyboard-Transfer/dp/B00NH13Q8W/ref=sr_1_7",
+  "https://www.amazon.com/Rii-Multiple-Mechanical-Multimedia-Keyboard/dp/B0CCZWCPRQ/ref=sr_1_8",
+  "https://www.amazon.com/Portable-Mechanical-Keyboard-MageGee-Backlit/dp/B098LG3N6R/ref=sr_1_9",
+  "https://www.amazon.com/AULA-F2088-Mechanical-Removable-Keyboards/dp/B09DKQWTNC/ref=sr_1_10"
+)
+
+product_names <- c(
+  "AmazonBasics Matte Keyboard QWERTY Layout",
+  "RedThunder Wireless Rechargeable Mechanical Anti-Ghosting",
+  "SteelSeries Worlds Fastest Mechanical Keyboard",
+  "AmazonBasics Matte Keyboard QWERTY Layout",
+  "Redragon S101 Keyboard Ergonomic Programmable",
+  "Logitech Programmable Backlighting Bluetooth Rechargeable",
+  "Amazon Basics Extension Keyboard Transfer",
+  "Rii Multiple Mechanical Multimedia Keyboard",
+  "Portable Mechanical Keyboard MageGee Backlit",
+  "AULA F2088 Mechanical Removable Keyboards"
+)
+
+category <- "Keyboard"
+
+all_reviews <- data.frame()
+
+for (i in seq_along(product_links)) {
+  # Get the product link and name
+  url <- product_links[i]
+  product_name <- product_names[i]
+  
+  try({
+    webpage <- read_html(url)
+    
+    reviews <- webpage %>%
+      html_nodes(".review")
+    
+    reviewer_names <- reviews %>%
+      html_nodes(".a-profile-name") %>%
+      html_text(trim = TRUE)
+    
+    review_dates <- reviews %>%
+      html_nodes(".review-date") %>%
+      html_text(trim = TRUE)
+    
+    review_titles <- reviews %>%
+      html_nodes(".review-title span") %>%
+      html_text(trim = TRUE)
+    
+    review_comments <- reviews %>%
+      html_nodes(".review-text-content span") %>%
+      html_text(trim = TRUE)
+    
+    verified_purchases <- reviews %>%
+      html_nodes(".review-vp-label") %>%
+      html_text(trim = TRUE)
+    
+    star_ratings <- reviews %>%
+      html_nodes(".a-icon-alt") %>%
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  # Extract the numeric rating
+      as.numeric()
+    
+    max_reviews <- min(20, length(reviewer_names))
+    reviewer_names <- reviewer_names[1:max_reviews]
+    review_dates <- review_dates[1:max_reviews]
+    review_titles <- review_titles[1:max_reviews]
+    review_comments <- review_comments[1:max_reviews]
+    verified_purchases <- verified_purchases[1:max_reviews]
+    star_ratings <- star_ratings[1:max_reviews]
+    
+    review_data <- data.frame(
+      Category = rep(category, max_reviews),
+      ProductName = rep(product_name, max_reviews),
+      Reviewer = reviewer_names,
+      Date = review_dates,
+      Title = review_titles,
+      Comment = review_comments,
+      StarRating = star_ratings,
+      VerifiedPurchase = verified_purchases,
+      stringsAsFactors = FALSE
+    )
+    
+    all_reviews <- bind_rows(all_reviews, review_data)
+  }, silent = TRUE)
+}
+
+print(all_reviews)
+
+write.csv(all_reviews, "Keyboard_reviews.csv")
+
+```
+```{r}
+library(rvest)
+library(dplyr)
+library(stringr)
+
+product_links <- c(
+  "https://www.amazon.com/RX-550-Computer-Graphics-DisplayPort/dp/B08VHWFWSD/ref=sr_1_1",
+  "https://www.amazon.com/VisionTek-Monitor-Graphics-Freesync-Bus-Powered/dp/B09B83MV78/ref=sr_1_2",
+  "https://www.amazon.com/MSI-GeForce-RTX-3060-12G/dp/B08WPRMVWB/ref=sr_1_3",
+  "https://www.amazon.com/GIGABYTE-REV2-0-WINDFORCE-GV-N3060GAMING-OC-12GD/dp/B0971BG25M/ref=sr_1_4",
+  "https://www.amazon.com/ASUS-SFF-Ready-GeForce-Graphics-DisplayPortTM/dp/B0D7KTZHXN/ref=sr_1_5",
+  "https://www.amazon.com/GIGABYTE-Graphics-WINDFORCE-GV-N4060GAMING-OC-8GD/dp/B0C8KQRH32/ref=sr_1_6",
+  "https://www.amazon.com/SURALLOW-Graphics-2048SP-Computer-Ports（Style/dp/B0CMD6L4CJ/ref=sr_1_7",
+  "https://www.amazon.com/ASUS-NVIDIA-GeForce-Gaming-Graphics/dp/B0CVCG2VPK/ref=sr_1_8",
+  "https://www.amazon.com/ASUS-Gaming-GeForce-Graphics-DisplayPort/dp/B0C422MFHV/ref=sr_1_9",
+  "https://www.amazon.com/GIGABYTE-Graphics-WINDFORCE-GV-R76XTGAMING-OC-16GD/dp/B0CSVJZNNX/ref=sr_1_10"
+)
+
+product_names <- c(
+  "maxsun AMD Radeon RX 550 4GB GDDR5 ITX Computer PC Gaming Video Graphics Card",
+  "VisionTek Radeon RX 550 4GB GDDR5 4K Monitor Graphics Card1",
+  "MSI Gaming GeForce RTX 3060 12GB 15 Gbps GDRR6 192-Bit HDMI/DP PCIe 4 Torx Twin Fan Ampere OC Graphics Card",
+  "GIGABYTE GeForce RTX 3060 Gaming OC 12G (REV2.0) Graphics Card",
+  "ASUS The SFF-Ready Prime GeForce RTX 4070 Super OC Edition 12GB GDDR6X Graphics Card ",
+  "GIGABYTE GeForce RTX 4060 Gaming OC 8G Graphics Card",
+  "RX 580 8GB Graphics Card, 2048SP,GDDR5,256 Bit Graphics Card for Gaming PC",
+  "ASUS Dual NVIDIA GeForce RTX 3050 6GB OC Edition Gaming Graphics Card",
+  "ASUS TUF Gaming GeForce RTX™ 4060 Ti OC Edition Gaming Graphics Card",
+  "GIGABYTE Radeon RX 7600 XT Gaming OC 16G Graphics Card"
+)
+
+category <- "Graphics Card"
+
+all_reviews <- data.frame()
+
+for (i in seq_along(product_links)) {
+  # Get the product link and name
+  url <- product_links[i]
+  product_name <- product_names[i]
+  
+  try({
+    webpage <- read_html(url)
+    
+    reviews <- webpage %>%
+      html_nodes(".review")
+    
+    reviewer_names <- reviews %>%
+      html_nodes(".a-profile-name") %>%
+      html_text(trim = TRUE)
+    
+    review_dates <- reviews %>%
+      html_nodes(".review-date") %>%
+      html_text(trim = TRUE)
+    
+    review_titles <- reviews %>%
+      html_nodes(".review-title span") %>%
+      html_text(trim = TRUE)
+    
+    review_comments <- reviews %>%
+      html_nodes(".review-text-content span") %>%
+      html_text(trim = TRUE)
+    
+    verified_purchases <- reviews %>%
+      html_nodes(".review-vp-label") %>%
+      html_text(trim = TRUE)
+    
+    star_ratings <- reviews %>%
+      html_nodes(".a-icon-alt") %>%
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  # Extract the numeric rating
+      as.numeric()
+    
+    max_reviews <- min(20, length(reviewer_names))
+    reviewer_names <- reviewer_names[1:max_reviews]
+    review_dates <- review_dates[1:max_reviews]
+    review_titles <- review_titles[1:max_reviews]
+    review_comments <- review_comments[1:max_reviews]
+    verified_purchases <- verified_purchases[1:max_reviews]
+    star_ratings <- star_ratings[1:max_reviews]
+    
+    review_data <- data.frame(
+      Category = rep(category, max_reviews),
+      ProductName = rep(product_name, max_reviews),
+      Reviewer = reviewer_names,
+      Date = review_dates,
+      Title = review_titles,
+      Comment = review_comments,
+      StarRating = star_ratings,
+      VerifiedPurchase = verified_purchases,
+      stringsAsFactors = FALSE
+    )
+    
+    all_reviews <- bind_rows(all_reviews, review_data)
+  }, silent = TRUE)
+}
+
+print(all_reviews)
+
+write.csv(all_reviews, "Graphics_Card_reviews.csv")
+
+
+```
+
+
+
+
+```{r}
+library(rvest)
+library(dplyr)
+library(stringr)
+
+product_links <- c(
+  "https://www.amazon.com/CyberPowerPC-i5-13400F-GeForce-Windows-GXiVR8060A24/dp/B0DCMPRRFD/ref=sr_1_1",
+  "https://www.amazon.com/MSI-Barebone-Desktop-Replacement-1MG-009BUS/dp/B0DBRGLX7S/ref=sr_1_2",
+  "https://www.amazon.com/CyberPowerPC-i5-13400F-GeForce-Windows-GXiVR8060A24/dp/B0DCMPRRFD/ref=sr_1_3",
+  "https://www.amazon.com/iBUYPOWER-Computer-Desktop-SMI7N47S01-GeForce/dp/B0DDZ3HBYX/ref=sr_1_4",
+  "https://www.amazon.com/CyberPowerPC-Master-GeForce-Windows-GMA2900A/dp/B0DCMMZS61/ref=sr_1_5",
+  "https://www.amazon.com/Thermaltake-Desktop-i5-13400F-GeForce®-S2QT-B66R-460-LCS/dp/B0CMY8B3XY/ref=sr_1_6",
+  "https://www.amazon.com/Skytech-Archangel-Gaming-Desktop-4-2GHz/dp/B0D9P8LD62/ref=sr_1_7",
+  "https://www.amazon.com/STGAubron-Gaming-Desktop-3-3Ghz-Keybaord/dp/B0BRL5PF1L/ref=sr_1_8",
+  "https://www.amazon.com/STGAubron-Desktop-Computer-Bluetooth-Keyboard/dp/B0BK539D4V/ref=sr_1_9",
+  "https://www.amazon.com/Dell-Optiplex-Desktop-Excellent-Condition/dp/B08X1KKVCZ/ref=sr_1_10"
+)
+
+product_names <- c(
+  "CyberPowerPC Gamer Xtreme VR Gaming PC",
+  "MSI Cubi NUC Barebone Desktop",
+  "CyberPowerPC Gamer Xtreme VR Gaming PC",
+  "iBUYPOWER Slate 8 MESH Gaming PC Computer Desktop SMI7N47S01",
+  "CyberPowerPC Gamer Master Gaming PC",
+  "Thermaltake LCGS Quartz i460 R4 Gaming Desktop",
+  "Skytech Archangel Gaming PC Desktop",
+  "STGAubron Prebuilt Gaming PC Desktop",
+  "STGAubron Gaming Desktop PC Computer",
+  "Dell Optiplex 7050 SFF Desktop PC"
+)
+
+category <- "PC"
+
+all_reviews <- data.frame()
+
+for (i in seq_along(product_links)) {
+  # Get the product link and name
+  url <- product_links[i]
+  product_name <- product_names[i]
+  
+  try({
+    webpage <- read_html(url)
+    
+    reviews <- webpage %>%
+      html_nodes(".review")
+    
+    reviewer_names <- reviews %>%
+      html_nodes(".a-profile-name") %>%
+      html_text(trim = TRUE)
+    
+    review_dates <- reviews %>%
+      html_nodes(".review-date") %>%
+      html_text(trim = TRUE)
+    
+    review_titles <- reviews %>%
+      html_nodes(".review-title span") %>%
+      html_text(trim = TRUE)
+    
+    review_comments <- reviews %>%
+      html_nodes(".review-text-content span") %>%
+      html_text(trim = TRUE)
+    
+    verified_purchases <- reviews %>%
+      html_nodes(".review-vp-label") %>%
+      html_text(trim = TRUE)
+    
+    star_ratings <- reviews %>%
+      html_nodes(".a-icon-alt") %>%
+      html_text(trim = TRUE) %>%
+      str_extract("\\d\\.\\d") %>%  # Extract the numeric rating
+      as.numeric()
+    
+    max_reviews <- min(20, length(reviewer_names))
+    reviewer_names <- reviewer_names[1:max_reviews]
+    review_dates <- review_dates[1:max_reviews]
+    review_titles <- review_titles[1:max_reviews]
+    review_comments <- review_comments[1:max_reviews]
+    verified_purchases <- verified_purchases[1:max_reviews]
+    star_ratings <- star_ratings[1:max_reviews]
+    
+    review_data <- data.frame(
+      Category = rep(category, max_reviews),
+      ProductName = rep(product_name, max_reviews),
+      Reviewer = reviewer_names,
+      Date = review_dates,
+      Title = review_titles,
+      Comment = review_comments,
+      StarRating = star_ratings,
+      VerifiedPurchase = verified_purchases,
+      stringsAsFactors = FALSE
+    )
+    
+    all_reviews <- bind_rows(all_reviews, review_data)
+  }, silent = TRUE)
+}
+
+print(all_reviews)
+
+write.csv(all_reviews, "PC_reviews.csv")
+
+
 ```
